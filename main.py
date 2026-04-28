@@ -10,7 +10,13 @@ try:
 except Exception:
     pass
 
-from db import get_db_name, get_server_name, get_serial_count, activate_serial
+from db import (
+    get_db_name,
+    get_server_name,
+    get_serial_count,
+    preview_serial,
+    activate_serial,
+)
 
 
 BG = "#0d1117"
@@ -77,13 +83,18 @@ class SerialActivationGUI(tk.Tk):
 
         tk.Label(
             header,
-            text="Enter a 13-digit SN to calculate and save its expiry date",
+            text="Enter a 13-digit SN, check dates first, then activate if needed",
             font=("Consolas", 11),
             bg=BG,
             fg=MUTED,
         ).grid(row=1, column=0, sticky="w", pady=(4, 0))
 
-        tk.Frame(self, bg=BORDER, height=1).grid(row=1, column=0, sticky="ew", padx=PAD)
+        tk.Frame(self, bg=BORDER, height=1).grid(
+            row=1,
+            column=0,
+            sticky="ew",
+            padx=PAD,
+        )
 
         info = tk.Frame(
             self,
@@ -94,6 +105,7 @@ class SerialActivationGUI(tk.Tk):
             highlightthickness=1,
         )
         info.grid(row=2, column=0, sticky="ew", padx=PAD, pady=(12, 0))
+
         for i in range(3):
             info.columnconfigure(i, weight=1)
 
@@ -109,6 +121,7 @@ class SerialActivationGUI(tk.Tk):
                 bg=PANEL,
                 fg=MUTED,
             ).grid(row=0, column=col, sticky="w")
+
             value = tk.Label(
                 info,
                 text="—",
@@ -117,6 +130,7 @@ class SerialActivationGUI(tk.Tk):
                 fg=color,
             )
             value.grid(row=1, column=col, sticky="w")
+
             setattr(self, attr, value)
 
         form = tk.Frame(
@@ -203,18 +217,49 @@ class SerialActivationGUI(tk.Tk):
             bordercolor=BORDER,
             thickness=6,
         )
-        self.progress = ttk.Progressbar(self, style="g.Horizontal.TProgressbar", mode="indeterminate")
+
+        self.progress = ttk.Progressbar(
+            self,
+            style="g.Horizontal.TProgressbar",
+            mode="indeterminate",
+        )
         self.progress.grid(row=5, column=0, sticky="ew", padx=PAD, pady=(8, 0))
 
-        btn_frame = tk.Frame(self, bg=BG, height=90)
+        # BUTTONS AREA
+        btn_frame = tk.Frame(self, bg=BG, height=95)
         btn_frame.grid(row=6, column=0, sticky="ew", padx=PAD, pady=(6, 12))
         btn_frame.grid_propagate(False)
-        btn_frame.pack_propagate(False)
+
+        btn_frame.columnconfigure(0, weight=1)
+        btn_frame.columnconfigure(1, weight=1)
+        btn_frame.rowconfigure(0, weight=1)
+
+        self.btn_check = tk.Button(
+            btn_frame,
+            text="CHECK SERIAL",
+            font=("Consolas", 15, "bold"),
+            bg=ACCENT,
+            fg="#0d1117",
+            activebackground="#79c0ff",
+            activeforeground="#0d1117",
+            bd=0,
+            cursor="hand2",
+            relief="flat",
+            height=2,
+            command=self._start_preview,
+        )
+        self.btn_check.grid(
+            row=0,
+            column=0,
+            sticky="ew",
+            padx=(130, 12),
+            pady=12,
+        )
 
         self.btn_activate = tk.Button(
             btn_frame,
             text="ACTIVATE SERIAL",
-            font=("Consolas", 16, "bold"),
+            font=("Consolas", 15, "bold"),
             bg=GREEN,
             fg="#0d1117",
             activebackground=GREEN_H,
@@ -222,13 +267,18 @@ class SerialActivationGUI(tk.Tk):
             bd=0,
             cursor="hand2",
             relief="flat",
-            width=38,
             height=2,
             command=self._start_activation,
         )
-        self.btn_activate.place(relx=0.5, rely=0.5, anchor="center")
+        self.btn_activate.grid(
+            row=0,
+            column=1,
+            sticky="ew",
+            padx=(12, 130),
+            pady=12,
+        )
 
-        self.bind("<Return>", lambda event: self._start_activation())
+        self.bind("<Return>", lambda event: self._start_preview())
 
     def _add_field(self, parent, row, label, variable, readonly=False):
         tk.Label(
@@ -268,8 +318,10 @@ class SerialActivationGUI(tk.Tk):
     def _limit_sn_length(self, event=None):
         value = self.sn_var.get()
         digits_only = "".join(ch for ch in value if ch.isdigit())
+
         if len(digits_only) > 13:
             digits_only = digits_only[:13]
+
         if value != digits_only:
             self.sn_var.set(digits_only)
 
@@ -278,84 +330,200 @@ class SerialActivationGUI(tk.Tk):
             db = get_db_name()
             server = get_server_name()
             count = get_serial_count()
+
             self.lbl_db.config(text=db, fg=ACCENT)
             self.lbl_count.config(text=str(count), fg=GREEN if count else MUTED)
             self.lbl_status.config(text="Ready", fg=MUTED)
+
             self._log(f"Connected to {server} / DB: {db} / {count} serial(s)", "info")
+
         except Exception as e:
             self.lbl_db.config(text="Config error", fg=RED)
             self.lbl_count.config(text="—", fg=RED)
             self.lbl_status.config(text="Error", fg=RED)
+
             self._log(f"Cannot connect/read config: {e}", "err")
-            self.message_var.set("Database/config error. Check config.txt and SQL Server connection.")
+            self.message_var.set(
+                "Database/config error. Check config.txt and SQL Server connection."
+            )
             self.lbl_message.config(fg=RED)
 
-    def _start_activation(self):
-        if self._running:
-            return
-
+    def _validate_sn_before_action(self):
         sn = self.sn_var.get().strip()
-        self.days_var.set("")
-        self.current_date_var.set("")
-        self.expiry_date_var.set("")
 
         if len(sn) != 13:
             self.message_var.set("Serial number must be exactly 13 digits.")
             self.lbl_message.config(fg=RED)
             self._log("Invalid SN: must be exactly 13 digits", "err")
-            return
+            return None
 
+        return sn
+
+    def _clear_result_fields(self):
+        self.days_var.set("")
+        self.current_date_var.set("")
+        self.expiry_date_var.set("")
+
+    def _set_buttons_loading(self, action_text):
         self._running = True
-        self.btn_activate.config(text="CHECKING…", state="disabled", bg=BORDER, fg=MUTED)
+
+        self.btn_check.config(state="disabled", bg=BORDER, fg=MUTED)
+        self.btn_activate.config(state="disabled", bg=BORDER, fg=MUTED)
+
+        if action_text == "preview":
+            self.btn_check.config(text="CHECKING…")
+            self.btn_activate.config(text="ACTIVATE SERIAL")
+            self.message_var.set("Checking serial without changing database...")
+        else:
+            self.btn_check.config(text="CHECK SERIAL")
+            self.btn_activate.config(text="ACTIVATING…")
+            self.message_var.set("Activating serial and saving expiry date...")
+
         self.lbl_status.config(text="In progress", fg=YELLOW)
-        self.message_var.set("Checking serial number...")
         self.lbl_message.config(fg=YELLOW)
         self.progress.start(12)
-        self._log("─" * 60, "dim")
-        self._log(f"Checking SN: {sn}", "info")
 
-        self._thread = threading.Thread(target=self._run_activation, args=(sn,), daemon=True)
+    def _reset_buttons(self):
+        self._running = False
+        self.progress.stop()
+
+        self.btn_check.config(
+            text="CHECK SERIAL",
+            state="normal",
+            bg=ACCENT,
+            fg="#0d1117",
+        )
+
+        self.btn_activate.config(
+            text="ACTIVATE SERIAL",
+            state="normal",
+            bg=GREEN,
+            fg="#0d1117",
+        )
+
+    def _start_preview(self):
+        if self._running:
+            return
+
+        sn = self._validate_sn_before_action()
+        if not sn:
+            return
+
+        self._clear_result_fields()
+        self._set_buttons_loading("preview")
+
+        self._log("─" * 60, "dim")
+        self._log(f"Preview SN without DB update: {sn}", "info")
+
+        self._thread = threading.Thread(
+            target=self._run_preview,
+            args=(sn,),
+            daemon=True,
+        )
+        self._thread.start()
+
+    def _run_preview(self, sn):
+        result = preview_serial(sn)
+        log_queue.put(("preview_result", result))
+
+    def _start_activation(self):
+        if self._running:
+            return
+
+        sn = self._validate_sn_before_action()
+        if not sn:
+            return
+
+        self._clear_result_fields()
+        self._set_buttons_loading("activate")
+
+        self._log("─" * 60, "dim")
+        self._log(f"Activating SN and saving ExpiryDate: {sn}", "warn")
+
+        self._thread = threading.Thread(
+            target=self._run_activation,
+            args=(sn,),
+            daemon=True,
+        )
         self._thread.start()
 
     def _run_activation(self, sn):
         result = activate_serial(sn)
-        log_queue.put(("result", result))
+        log_queue.put(("activation_result", result))
 
     def _poll_queue(self):
         try:
             while True:
                 kind, payload = log_queue.get_nowait()
-                if kind == "result":
+
+                if kind == "preview_result":
+                    self._finish_preview(payload)
+
+                elif kind == "activation_result":
                     self._finish_activation(payload)
+
                 else:
                     tag = kind if kind in ("ok", "err", "warn", "info", "dim") else "normal"
                     self._log(str(payload), tag)
+
         except queue.Empty:
             pass
+
         finally:
             self.after(100, self._poll_queue)
 
-    def _finish_activation(self, result):
-        self._running = False
-        self.progress.stop()
-        self.btn_activate.config(text="ACTIVATE SERIAL", state="normal", bg=GREEN, fg="#0d1117")
-
+    def _fill_result_fields(self, result):
         self.days_var.set(str(result.get("validity_days", "") or ""))
         self.current_date_var.set(str(result.get("current_date", "") or ""))
         self.expiry_date_var.set(str(result.get("expiry_date", "") or ""))
         self.message_var.set(result.get("message", ""))
 
+    def _finish_preview(self, result):
+        self._reset_buttons()
+        self._fill_result_fields(result)
+
         if result.get("success"):
-            self.lbl_status.config(text="Done ✓", fg=GREEN)
-            self.lbl_message.config(fg=GREEN)
-            self._log(result.get("message"), "ok")
-            self._log(f"ExpiryDate saved: {result.get('expiry_date')}", "ok")
+            if result.get("already_used"):
+                self.lbl_status.config(text="Already used", fg=YELLOW)
+                self.lbl_message.config(fg=YELLOW)
+                self._log(result.get("message"), "warn")
+                self._log(
+                    f"Saved ExpiryDate already in DB: {result.get('expiry_date')}",
+                    "warn",
+                )
+            else:
+                self.lbl_status.config(text="Preview ✓", fg=ACCENT)
+                self.lbl_message.config(fg=ACCENT)
+                self._log(result.get("message"), "info")
+                self._log(f"NB OF DAYS: {result.get('validity_days')}", "info")
+                self._log(f"CURRENT DATE: {result.get('current_date')}", "info")
+                self._log(
+                    f"CALCULATED EXPIRY DATE: {result.get('expiry_date')}",
+                    "info",
+                )
+                self._log("Database was NOT changed.", "warn")
         else:
             self.lbl_status.config(text="Failed ✗", fg=RED)
             self.lbl_message.config(fg=RED)
             self._log(result.get("message"), "err")
 
-        # Refresh serial count / DB status after each operation.
+    def _finish_activation(self, result):
+        self._reset_buttons()
+        self._fill_result_fields(result)
+
+        if result.get("success"):
+            self.lbl_status.config(text="Activated ✓", fg=GREEN)
+            self.lbl_message.config(fg=GREEN)
+            self._log(result.get("message"), "ok")
+            self._log(
+                f"ExpiryDate saved in database: {result.get('expiry_date')}",
+                "ok",
+            )
+        else:
+            self.lbl_status.config(text="Failed ✗", fg=RED)
+            self.lbl_message.config(fg=RED)
+            self._log(result.get("message"), "err")
+
         try:
             count = get_serial_count()
             self.lbl_count.config(text=str(count), fg=GREEN if count else MUTED)
@@ -364,6 +532,7 @@ class SerialActivationGUI(tk.Tk):
 
     def _log(self, text, tag="normal"):
         ts = time.strftime("%H:%M:%S")
+
         self.log_box.config(state="normal")
         self.log_box.insert("end", f"[{ts}]  ", "dim")
         self.log_box.insert("end", str(text) + "\n", tag)

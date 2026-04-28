@@ -6,3 +6,4 @@ dist/
 venv/
 .venv/
 config.txt
+dist.zip

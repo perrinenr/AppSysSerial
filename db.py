@@ -121,20 +121,10 @@ def build_connection_string() -> str:
         f"DRIVER={{{driver_name}}}",
         f"SERVER={cfg['SERVER']}",
         f"DATABASE={cfg['DATABASE']}",
+        f"Trusted_Connection=yes",
         f"TrustServerCertificate={cfg.get('TRUST_SERVER_CERTIFICATE', 'yes')}",
     ]
 
-    username = cfg.get("SQL_USERNAME")
-    password = cfg.get("SQL_PASSWORD")
-
-    if username and password:
-        parts.append(f"UID={username}")
-        parts.append(f"PWD={password}")
-    else:
-        parts.append(f"Trusted_Connection={cfg.get('TRUSTED_CONNECTION', 'yes')}")
-
-    # For ODBC Driver 18, encryption is often required by default.
-    # We keep it configurable.
     encrypt = cfg.get("ENCRYPT")
     if encrypt:
         parts.append(f"Encrypt={encrypt}")
@@ -152,6 +142,119 @@ def get_serial_count() -> int:
         cur = conn.cursor()
         cur.execute("SELECT COUNT(*) FROM dbo.AppSysSerial")
         return int(cur.fetchone()[0])
+
+
+def preview_serial(sn: str) -> dict:
+    """
+    Preview serial information without changing the database.
+
+    This function:
+    - Checks if SN exists.
+    - Reads ValidityDays from database.
+    - Calculates current date.
+    - Calculates expiry date.
+    - Does NOT update ExpiryDate in SQL Server.
+    """
+
+    sn = (sn or "").strip()
+
+    if not re.fullmatch(r"\d{13}", sn):
+        return {
+            "success": False,
+            "message": "Serial number must be exactly 13 digits.",
+            "sn": sn,
+        }
+
+    try:
+        with get_connection() as conn:
+            cur = conn.cursor()
+
+            cur.execute(
+                """
+                SELECT SN, ValidityDays, ExpiryDate
+                FROM dbo.AppSysSerial
+                WHERE SN = ?
+                """,
+                sn,
+            )
+
+            row = cur.fetchone()
+
+            if not row:
+                return {
+                    "success": False,
+                    "message": "Serial number not found.",
+                    "sn": sn,
+                }
+
+            validity_days = row.ValidityDays
+            old_expiry_date = row.ExpiryDate
+
+            if validity_days is None:
+                return {
+                    "success": False,
+                    "message": "ValidityDays is missing for this serial.",
+                    "sn": sn,
+                }
+
+            try:
+                validity_days = int(validity_days)
+            except Exception:
+                return {
+                    "success": False,
+                    "message": "ValidityDays is invalid.",
+                    "sn": sn,
+                }
+
+            if validity_days <= 0:
+                return {
+                    "success": False,
+                    "message": "ValidityDays must be greater than 0.",
+                    "sn": sn,
+                    "validity_days": validity_days,
+                }
+
+            current_date = date.today()
+            calculated_expiry_date = current_date + timedelta(days=validity_days)
+
+            current_text = current_date.strftime("%Y-%m-%d")
+            calculated_expiry_text = calculated_expiry_date.strftime("%Y-%m-%d")
+
+            already_used = old_expiry_date is not None and str(old_expiry_date).strip() != ""
+
+            if already_used:
+                return {
+                    "success": True,
+                    "message": "Serial found, but it is already activated.",
+                    "sn": sn,
+                    "validity_days": validity_days,
+                    "current_date": current_text,
+                    "expiry_date": str(old_expiry_date).strip(),
+                    "calculated_expiry_date": calculated_expiry_text,
+                    "already_used": True,
+                    "can_activate": False,
+                    "preview_only": True,
+                }
+
+            return {
+                "success": True,
+                "message": "Preview only. Database was not changed.",
+                "sn": sn,
+                "validity_days": validity_days,
+                "current_date": current_text,
+                "expiry_date": calculated_expiry_text,
+                "calculated_expiry_date": calculated_expiry_text,
+                "already_used": False,
+                "can_activate": True,
+                "preview_only": True,
+            }
+
+    except Exception as exc:
+        return {
+            "success": False,
+            "message": f"Database error: {exc}",
+            "sn": sn,
+        }
 
 
 def activate_serial(sn: str) -> dict:
@@ -274,6 +377,9 @@ def activate_serial(sn: str) -> dict:
             "validity_days": validity_days,
             "current_date": current_text,
             "expiry_date": expiry_text,
+            "already_used": False,
+            "can_activate": False,
+            "preview_only": False,
         }
 
     except Exception as exc:
