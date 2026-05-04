@@ -6,6 +6,27 @@ from datetime import date, timedelta
 import pyodbc
 
 
+SN_PATTERN = re.compile(r"^[A-Za-z0-9]{13}$")
+
+
+def normalize_sn(sn: str) -> str:
+    """Clean serial number before validation/search."""
+    return (sn or "").strip().upper()
+
+
+def is_valid_sn(sn: str) -> bool:
+    """SN must be exactly 13 alphanumeric characters: A-Z and 0-9."""
+    return bool(SN_PATTERN.fullmatch(sn or ""))
+
+
+def invalid_sn_response(sn: str) -> dict:
+    return {
+        "success": False,
+        "message": "Serial number must be exactly 13 alphanumeric characters.",
+        "sn": sn,
+    }
+
+
 def app_path() -> str:
     """Return folder path for normal Python run or PyInstaller exe."""
     if getattr(sys, "frozen", False):
@@ -121,7 +142,7 @@ def build_connection_string() -> str:
         f"DRIVER={{{driver_name}}}",
         f"SERVER={cfg['SERVER']}",
         f"DATABASE={cfg['DATABASE']}",
-        f"Trusted_Connection=yes",
+        "Trusted_Connection=yes",
         f"TrustServerCertificate={cfg.get('TRUST_SERVER_CERTIFICATE', 'yes')}",
     ]
 
@@ -137,7 +158,7 @@ def get_connection():
 
 
 def get_serial_count() -> int:
-    """Used by the GUI to show that DB is reachable."""
+    """Optional helper. Not shown in the simplified GUI."""
     with get_connection() as conn:
         cur = conn.cursor()
         cur.execute("SELECT COUNT(*) FROM dbo.AppSysSerial")
@@ -156,14 +177,10 @@ def preview_serial(sn: str) -> dict:
     - Does NOT update ExpiryDate in SQL Server.
     """
 
-    sn = (sn or "").strip()
+    sn = normalize_sn(sn)
 
-    if not re.fullmatch(r"\d{13}", sn):
-        return {
-            "success": False,
-            "message": "Serial number must be exactly 13 digits.",
-            "sn": sn,
-        }
+    if not is_valid_sn(sn):
+        return invalid_sn_response(sn)
 
     try:
         with get_connection() as conn:
@@ -238,7 +255,7 @@ def preview_serial(sn: str) -> dict:
 
             return {
                 "success": True,
-                "message": "Preview only. Database was not changed.",
+                "message": "Serial is valid and ready to activate.",
                 "sn": sn,
                 "validity_days": validity_days,
                 "current_date": current_text,
@@ -262,21 +279,17 @@ def activate_serial(sn: str) -> dict:
     Activate a serial number.
 
     Rules:
-    - SN must be exactly 13 digits.
+    - SN must be exactly 13 alphanumeric characters.
     - SN must exist in dbo.AppSysSerial.
     - ExpiryDate must be NULL or empty.
     - ValidityDays must exist and be > 0.
     - ExpiryDate is saved as YYYY-MM-DD because SQL column is nvarchar(10).
     """
 
-    sn = (sn or "").strip()
+    sn = normalize_sn(sn)
 
-    if not re.fullmatch(r"\d{13}", sn):
-        return {
-            "success": False,
-            "message": "Serial number must be exactly 13 digits.",
-            "sn": sn,
-        }
+    if not is_valid_sn(sn):
+        return invalid_sn_response(sn)
 
     conn = get_connection()
 
