@@ -1,10 +1,10 @@
-# AppSysSerial Python GUI
+# AppSysSerial
 
 Small Python Tkinter application that activates a serial number from SQL Server.
 
 ## What it does
 
-1. User enters an SN of exactly 13 digits.
+1. User enters an SN of exactly 13 alphanumeric.
 2. The app checks `dbo.AppSysSerial` in SQL Server.
 3. If the SN exists and has no `ExpiryDate`, it reads `ValidityDays`.
 4. It calculates `ExpiryDate = current date + ValidityDays`.
@@ -28,7 +28,7 @@ Install the ODBC Driver for SQL Server, then install Python packages:
 Edit `config.txt`:
 
 ```txt
-SERVER=.\SQLEXPRESS
+SERVER=.
 DATABASE=master
 DRIVER=ODBC Driver 17 for SQL Server
 TRUSTED_CONNECTION=yes
